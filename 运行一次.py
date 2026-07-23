@@ -787,12 +787,12 @@ def 证据文本(row: pd.Series) -> str:
 
 
 def TradingView链接(code: str) -> str:
-    exchange = "SSE" if str(code).startswith("6") else "SZSE"
+    exchange = "SSE" if str(code).startswith(("5", "6")) else "SZSE"
     return f"https://www.tradingview.com/chart/?symbol={exchange}%3A{code}"
 
 
-def 新浪个股链接(code: str) -> str:
-    market = "sh" if str(code).startswith("6") else "sz"
+def 新浪行情链接(code: str) -> str:
+    market = "sh" if str(code).startswith(("5", "6")) else "sz"
     return f"https://quotes.sina.cn/hs/company/quotes/view/{market}{code}"
 
 
@@ -854,7 +854,7 @@ def 生成看板(
         stock_rows = []
         for _, stock in group.iterrows():
             chart_url = TradingView链接(str(stock["股票代码"]))
-            mobile_url = 新浪个股链接(str(stock["股票代码"]))
+            mobile_url = 新浪行情链接(str(stock["股票代码"]))
             stock_rows.append(
                 f"<tr><td><a class='stock-link' href='{chart_url}' data-desktop-url='{chart_url}' data-mobile-url='{mobile_url}' "
                 "target='_blank' rel='noopener noreferrer' title='在 TradingView 打开'>"
@@ -877,8 +877,14 @@ def 生成看板(
     etf_rows = []
     if not etfs.empty:
         for _, row in etfs.iterrows():
+            etf_code = str(row["ETF代码"])
+            chart_url = TradingView链接(etf_code)
+            mobile_url = 新浪行情链接(etf_code)
             etf_rows.append(
-                f"<tr><td>{html.escape(row['主线'])}</td><td><strong>{html.escape(row['ETF名称'])}</strong><small>{row['ETF代码']}</small></td>"
+                f"<tr><td>{html.escape(row['主线'])}</td><td><a class='stock-link etf-link' href='{chart_url}' "
+                f"data-desktop-url='{chart_url}' data-mobile-url='{mobile_url}' target='_blank' rel='noopener noreferrer' "
+                f"title='在 TradingView 打开'><strong>{html.escape(row['ETF名称'])}</strong>"
+                f"<small>{etf_code} · <span class='stock-link-source'>TradingView图表</span></small></a></td>"
                 f"<td>{旧工具.金额(row['成交额'])}</td><td>{旧工具.金额(row['规模代理'])}</td><td>{html.escape(row['评价说明'])}</td></tr>"
             )
 
