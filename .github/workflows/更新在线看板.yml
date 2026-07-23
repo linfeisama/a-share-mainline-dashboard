@@ -1,0 +1,64 @@
+name: 更新A股主线在线看板
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "**"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "a-share-dashboard-pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 读取项目
+        uses: actions/checkout@v4
+
+      - name: 准备Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "依赖清单.txt"
+
+      - name: 恢复市场数据缓存
+        uses: actions/cache@v4
+        with:
+          path: 缓存
+          key: 市场数据-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            市场数据-${{ runner.os }}-
+
+      - name: 安装数据组件
+        run: python -m pip install -r "依赖清单.txt"
+
+      - name: 生成最新看板
+        run: python "运行一次.py"
+
+      - name: 配置网页发布
+        uses: actions/configure-pages@v5
+
+      - name: 上传网页
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: 在线站点
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布到GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

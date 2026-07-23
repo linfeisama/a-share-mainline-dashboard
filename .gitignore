@@ -1,0 +1,6 @@
+缓存/
+结果/
+__pycache__/
+*.pyc
+*.pyo
+*.log
