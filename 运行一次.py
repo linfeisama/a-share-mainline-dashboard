@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlencode
 
 import akshare as ak
 import numpy as np
@@ -788,7 +789,7 @@ def 证据文本(row: pd.Series) -> str:
 
 def TradingView链接(code: str) -> str:
     exchange = "SSE" if str(code).startswith(("5", "6")) else "SZSE"
-    return f"https://www.tradingview.com/chart/?symbol={exchange}%3A{code}"
+    return f"https://cn.tradingview.com/chart/?symbol={exchange}%3A{code}"
 
 
 def 新浪行情链接(code: str) -> str:
@@ -796,11 +797,31 @@ def 新浪行情链接(code: str) -> str:
     return f"https://quotes.sina.cn/hs/company/quotes/view/{market}{code}"
 
 
-def 行业表格行(frame: pd.DataFrame, name_column: str) -> str:
+def 申万指数链接(code: str, name: str) -> str:
+    query = urlencode({"code": str(code).replace(".SI", ""), "name": str(name)})
+    return (
+        "https://www.swsresearch.com/institute_sw/allIndex/"
+        f"releasedIndex/releasedetail?{query}"
+    )
+
+
+def 行业名称链接(name: Any, code: Any, strong: bool = True) -> str:
+    escaped_name = html.escape(str(name))
+    label = f"<strong>{escaped_name}</strong>" if strong else escaped_name
+    if pd.isna(code) or not str(code).strip():
+        return label
+    url = html.escape(申万指数链接(str(code), str(name)), quote=True)
+    return (
+        f"<a class='industry-link' href='{url}' target='_blank' rel='noopener noreferrer' "
+        f"title='查看{escaped_name}申万指数K线'>{label}</a>"
+    )
+
+
+def 行业表格行(frame: pd.DataFrame, name_column: str, code_column: str) -> str:
     rows = []
     for _, row in frame.iterrows():
         rows.append(
-            f"<tr><td><strong>{html.escape(str(row[name_column]))}</strong></td>"
+            f"<tr><td>{行业名称链接(row[name_column], row[code_column])}</td>"
             f"<td><span class='phase p-{row['主线阶段']}'>{row['主线阶段']}</span></td>"
             f"<td>{row['方向得分']:.1f}</td><td>{百分点(row['二十日超额'])}</td>"
             f"<td>{百分点(row['六十日超额'])}</td><td>{百分比(row['二十日正超额广度'])}</td>"
@@ -826,12 +847,19 @@ def 生成看板(
     generated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     market_date = benchmark.index.max().strftime("%Y-%m-%d")
 
-    first_rows = 行业表格行(first_all, "一级行业")
-    second_rows = 行业表格行(second_selected, "二级行业")
+    一级代码映射 = dict(zip(first_all["一级行业"], first_all["一级代码"]))
+    二级代码映射 = dict(zip(second_all["二级行业"], second_all["二级代码"]))
+    细分代码映射 = dict(zip(selected["叶子行业"], selected["叶子代码"]))
+    first_rows = 行业表格行(first_all, "一级行业", "一级代码")
+    second_rows = 行业表格行(second_selected, "二级行业", "二级代码")
     leaf_rows = []
     for _, row in selected.iterrows():
+        parent_links = (
+            f"{行业名称链接(row['一级行业'], 一级代码映射.get(row['一级行业']), False)} / "
+            f"{行业名称链接(row['二级行业'], 二级代码映射.get(row['二级行业']), False)}"
+        )
         leaf_rows.append(
-            f"<tr><td><strong>{html.escape(row['叶子行业'])}</strong><small>{html.escape(row['一级行业'])} / {html.escape(row['二级行业'])}</small></td>"
+            f"<tr><td>{行业名称链接(row['叶子行业'], row['叶子代码'])}<small>{parent_links}</small></td>"
             f"<td><span class='phase p-{row['主线阶段']}'>{row['主线阶段']}</span></td><td>{row['叶子强度分']:.1f}</td>"
             f"<td>{百分点(row['二十日超额'])}</td><td>{百分点(row['六十日超额'])}</td>"
             f"<td>{百分比(row['十日排名持续率'])}</td><td>{百分比(row['趋势完整度'])}</td>"
@@ -841,11 +869,18 @@ def 生成看板(
 
     concept_rows = []
     for _, row in concept_confirm.iterrows():
+        related_name = str(row["最相关细分主线"])
+        related_code = 细分代码映射.get(related_name)
+        related_html = (
+            行业名称链接(related_name, related_code, False)
+            if related_code
+            else html.escape(related_name)
+        )
         concept_rows.append(
             f"<tr><td><strong>{html.escape(row['概念名称'])}</strong></td><td>{row['概念得分']:.1f}</td>"
             f"<td>{百分点(row['二十日超额'])}</td><td>{百分点(row['六十日超额'])}</td>"
             f"<td>{百分比(row['十日排名持续率'])}</td><td>{html.escape(row['确认状态'])}</td>"
-            f"<td>{html.escape(row['最相关细分主线'])}</td><td>{百分比(row['成分交叉比例'])} / {int(row['交叉股票数'])}只</td></tr>"
+            f"<td>{related_html}</td><td>{百分比(row['成分交叉比例'])} / {int(row['交叉股票数'])}只</td></tr>"
         )
 
     stock_sections = []
@@ -866,9 +901,13 @@ def 生成看板(
                 f"<td>{html.escape(stock['角色'])}</td><td>{html.escape(stock['数据置信等级'])}</td>"
                 f"<td>{html.escape(stock['风险说明'])}</td></tr>"
             )
+        parent_links = (
+            f"{行业名称链接(line['一级行业'], 一级代码映射.get(line['一级行业']), False)} / "
+            f"{行业名称链接(line['二级行业'], 二级代码映射.get(line['二级行业']), False)}"
+        )
         stock_sections.append(
-            f"<section><div class='section-head'><h2>{html.escape(line['叶子行业'])} 第一梯队</h2>"
-            f"<span>{html.escape(line['一级行业'])} / {html.escape(line['二级行业'])} · 仅评价公司身份</span></div>"
+            f"<section><div class='section-head'><h2>{行业名称链接(line['叶子行业'], line['叶子代码'])} 第一梯队</h2>"
+            f"<span>{parent_links} · 仅评价公司身份</span></div>"
             "<div class='table-wrap' data-collapse-limit='3'><table><thead><tr><th>公司</th><th>状态</th><th>总分</th><th>产业</th><th>质量</th>"
             "<th>增长</th><th>长期认可</th><th>角色</th><th>置信</th><th>风险</th></tr></thead>"
             f"<tbody>{''.join(stock_rows) or '<tr><td colspan=10>暂无符合交易范围且数据足够的公司</td></tr>'}</tbody></table></div></section>"
@@ -881,7 +920,8 @@ def 生成看板(
             chart_url = TradingView链接(etf_code)
             mobile_url = 新浪行情链接(etf_code)
             etf_rows.append(
-                f"<tr><td>{html.escape(row['主线'])}</td><td><a class='stock-link etf-link' href='{chart_url}' "
+                f"<tr><td>{行业名称链接(row['主线'], 细分代码映射.get(row['主线']), False)}</td>"
+                f"<td><a class='stock-link etf-link' href='{chart_url}' "
                 f"data-desktop-url='{chart_url}' data-mobile-url='{mobile_url}' target='_blank' rel='noopener noreferrer' "
                 f"title='在 TradingView 打开'><strong>{html.escape(row['ETF名称'])}</strong>"
                 f"<small>{etf_code} · <span class='stock-link-source'>TradingView图表</span></small></a></td>"
@@ -899,7 +939,7 @@ header{{padding:28px 4vw 22px;border-bottom:1px solid var(--line);background:#15
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(135px,1fr));gap:1px;background:var(--line);border-bottom:1px solid var(--line)}}.metric{{min-width:0;background:var(--panel);padding:18px 2.5vw}}.metric b{{display:block;font-size:20px;margin-top:5px;color:#fff}}
 section{{padding:24px 4vw;border-bottom:1px solid var(--line)}}section:nth-of-type(even){{background:#14181a}}.section-head{{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}}.section-head span{{color:var(--muted)}}
 .table-wrap{{width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}}table{{width:100%;border-collapse:collapse;min-width:960px}}th,td{{padding:10px 11px;border-bottom:1px solid #2b3236;text-align:left;vertical-align:top}}th{{background:var(--panel2);font-weight:600;white-space:nowrap;color:#cfd6da}}tbody tr:hover{{background:#20272a}}tbody tr.is-collapsed{{display:none}}tr:last-child td{{border-bottom:0}}small{{display:block;color:var(--muted);margin-top:4px}}.table-toggle-row{{display:flex;justify-content:center;margin-top:10px}}.table-toggle{{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:0 12px;border:1px solid #424c51;border-radius:6px;background:#1b2023;color:#cbd3d7;font:inherit;cursor:pointer}}.table-toggle:hover{{border-color:var(--cyan);color:var(--cyan)}}.table-toggle-icon{{width:16px;font-size:18px;line-height:1;text-align:center}}
-.phase{{font-weight:700}}.p-扩散,.p-确认{{color:var(--green)}}.p-形成,.p-萌芽{{color:var(--amber)}}.p-观察{{color:var(--muted)}}.notice{{border-left:3px solid var(--amber);padding:10px 14px;background:#242117;color:#d8c596;margin-top:14px}}.stock-link{{display:block;color:var(--cyan);text-decoration:none}}.stock-link:hover strong{{text-decoration:underline}}.stock-link small{{color:#8daeb4}}footer{{padding:20px 4vw 35px;color:var(--muted);background:#0e1112}}
+.phase{{font-weight:700}}.p-扩散,.p-确认{{color:var(--green)}}.p-形成,.p-萌芽{{color:var(--amber)}}.p-观察{{color:var(--muted)}}.notice{{border-left:3px solid var(--amber);padding:10px 14px;background:#242117;color:#d8c596;margin-top:14px}}.industry-link,.stock-link{{color:var(--cyan);text-decoration:none}}.industry-link:hover,.stock-link:hover strong{{text-decoration:underline}}.stock-link{{display:block}}.stock-link small{{color:#8daeb4}}footer{{padding:20px 4vw 35px;color:var(--muted);background:#0e1112}}
 @media(max-width:760px){{.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}header,section{{padding-left:18px;padding-right:18px}}.header-row{{align-items:flex-start;flex-direction:column;gap:14px}}h1{{font-size:22px}}small{{overflow-wrap:anywhere}}.section-head{{align-items:start;flex-direction:column}}.section-head span{{line-height:1.5}}.metric:last-child{{grid-column:1/-1}}}}
 </style></head><body>
 <header><div class="header-row"><div class="header-copy"><h1>申万分层主线与第一梯队看板</h1><p>行情日期 {market_date} · 生成时间 {generated} · 不评价当前位置和买卖时点</p></div><button id="refresh-button" class="refresh-button" type="button" onclick="refreshMarket()" title="重新获取行情并生成看板"><span class="refresh-icon" aria-hidden="true">↻</span><span>更新行情</span></button></div><div id="refresh-status" class="refresh-status" role="status" aria-live="polite"></div></header>
@@ -1050,6 +1090,16 @@ def main() -> None:
         raise RuntimeError(f"叶子行业有效行情覆盖不足：{len(leaf_detail)}/{len(leaves)}")
     first_summary = 汇总行业方向(leaf_detail, "一级行业", "一级行业")
     second_summary = 汇总行业方向(leaf_detail, "二级行业", "二级行业")
+    一级代码表 = first[["行业名称", "行业代码"]].rename(
+        columns={"行业名称": "一级行业", "行业代码": "一级代码"}
+    )
+    一级代码表["一级代码"] = 一级代码表["一级代码"].str.replace(".SI", "", regex=False)
+    二级代码表 = second[["行业名称", "行业代码"]].rename(
+        columns={"行业名称": "二级行业", "行业代码": "二级代码"}
+    )
+    二级代码表["二级代码"] = 二级代码表["二级代码"].str.replace(".SI", "", regex=False)
+    first_summary = first_summary.merge(一级代码表, on="一级行业", how="left")
+    second_summary = second_summary.merge(二级代码表, on="二级行业", how="left")
     second_to_first = leaves[["二级行业", "一级行业"]].drop_duplicates()
     second_summary = second_summary.merge(second_to_first, on="二级行业", how="left")
     first_selected, second_selected, selected = 选择细分主线(first_summary, second_summary, leaf_detail)
