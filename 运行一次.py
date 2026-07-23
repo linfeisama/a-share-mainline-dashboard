@@ -861,7 +861,7 @@ def 生成看板(
         stock_sections.append(
             f"<section><div class='section-head'><h2>{html.escape(line['叶子行业'])} 第一梯队</h2>"
             f"<span>{html.escape(line['一级行业'])} / {html.escape(line['二级行业'])} · 仅评价公司身份</span></div>"
-            "<div class='table-wrap'><table><thead><tr><th>公司</th><th>状态</th><th>总分</th><th>产业</th><th>质量</th>"
+            "<div class='table-wrap' data-collapse-limit='3'><table><thead><tr><th>公司</th><th>状态</th><th>总分</th><th>产业</th><th>质量</th>"
             "<th>增长</th><th>长期认可</th><th>角色</th><th>置信</th><th>风险</th></tr></thead>"
             f"<tbody>{''.join(stock_rows) or '<tr><td colspan=10>暂无符合交易范围且数据足够的公司</td></tr>'}</tbody></table></div></section>"
         )
@@ -884,20 +884,49 @@ header{{padding:28px 4vw 22px;border-bottom:1px solid var(--line);background:#15
 .refresh-button{{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 14px;border:1px solid #4b565c;border-radius:6px;background:#22282b;color:#eef3f5;font:inherit;font-weight:700;cursor:pointer}}.refresh-button:hover{{border-color:var(--cyan);color:var(--cyan)}}.refresh-button:disabled{{cursor:wait;opacity:.65}}.refresh-icon{{font-size:20px;line-height:1}}.refresh-button.loading .refresh-icon{{animation:spin .9s linear infinite}}.refresh-status{{min-height:20px;margin-top:8px;color:var(--muted);font-size:13px}}.refresh-status.error{{color:var(--red)}}.refresh-status.success{{color:var(--green)}}@keyframes spin{{to{{transform:rotate(360deg)}}}}
 .summary{{display:grid;grid-template-columns:repeat(5,minmax(135px,1fr));gap:1px;background:var(--line);border-bottom:1px solid var(--line)}}.metric{{min-width:0;background:var(--panel);padding:18px 2.5vw}}.metric b{{display:block;font-size:20px;margin-top:5px;color:#fff}}
 section{{padding:24px 4vw;border-bottom:1px solid var(--line)}}section:nth-of-type(even){{background:#14181a}}.section-head{{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}}.section-head span{{color:var(--muted)}}
-.table-wrap{{width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}}table{{width:100%;border-collapse:collapse;min-width:960px}}th,td{{padding:10px 11px;border-bottom:1px solid #2b3236;text-align:left;vertical-align:top}}th{{background:var(--panel2);font-weight:600;white-space:nowrap;color:#cfd6da}}tbody tr:hover{{background:#20272a}}tr:last-child td{{border-bottom:0}}small{{display:block;color:var(--muted);margin-top:4px}}
+.table-wrap{{width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}}table{{width:100%;border-collapse:collapse;min-width:960px}}th,td{{padding:10px 11px;border-bottom:1px solid #2b3236;text-align:left;vertical-align:top}}th{{background:var(--panel2);font-weight:600;white-space:nowrap;color:#cfd6da}}tbody tr:hover{{background:#20272a}}tbody tr.is-collapsed{{display:none}}tr:last-child td{{border-bottom:0}}small{{display:block;color:var(--muted);margin-top:4px}}.table-toggle-row{{display:flex;justify-content:center;margin-top:10px}}.table-toggle{{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:0 12px;border:1px solid #424c51;border-radius:6px;background:#1b2023;color:#cbd3d7;font:inherit;cursor:pointer}}.table-toggle:hover{{border-color:var(--cyan);color:var(--cyan)}}.table-toggle-icon{{width:16px;font-size:18px;line-height:1;text-align:center}}
 .phase{{font-weight:700}}.p-扩散,.p-确认{{color:var(--green)}}.p-形成,.p-萌芽{{color:var(--amber)}}.p-观察{{color:var(--muted)}}.notice{{border-left:3px solid var(--amber);padding:10px 14px;background:#242117;color:#d8c596;margin-top:14px}}.stock-link{{display:block;color:var(--cyan);text-decoration:none}}.stock-link:hover strong{{text-decoration:underline}}.stock-link small{{color:#8daeb4}}footer{{padding:20px 4vw 35px;color:var(--muted);background:#0e1112}}
 @media(max-width:760px){{.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}header,section{{padding-left:18px;padding-right:18px}}.header-row{{align-items:flex-start;flex-direction:column;gap:14px}}h1{{font-size:22px}}small{{overflow-wrap:anywhere}}.section-head{{align-items:start;flex-direction:column}}.section-head span{{line-height:1.5}}.metric:last-child{{grid-column:1/-1}}}}
 </style></head><body>
 <header><div class="header-row"><div class="header-copy"><h1>申万分层主线与第一梯队看板</h1><p>行情日期 {market_date} · 生成时间 {generated} · 不评价当前位置和买卖时点</p></div><button id="refresh-button" class="refresh-button" type="button" onclick="refreshMarket()" title="重新获取行情并生成看板"><span class="refresh-icon" aria-hidden="true">↻</span><span>更新行情</span></button></div><div id="refresh-status" class="refresh-status" role="status" aria-live="polite"></div></header>
 <div class="summary"><div class="metric">市场状态<b>{state}</b><small>{state_reason}</small></div><div class="metric">一级行业<b>{len(first_all)}</b><small>同层比较</small></div><div class="metric">二级行业<b>{len(second_all)}</b><small>同层比较</small></div><div class="metric">叶子行业<b>{len(leaf_all)}</b><small>全覆盖计算底座</small></div><div class="metric">概念板块<b>{len(concept_confirm)}</b><small>独立确认，不混排</small></div></div>
-<section><div class="section-head"><h2>一级资金方向</h2><span>完整展示 31 个一级行业，按方向得分排序</span></div><div class="table-wrap"><table><thead><tr><th>一级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{first_rows}</tbody></table></div><div class="notice">这里的“资金方向”由相对收益、行业扩散、排名持续性、趋势和量能共同代理，不把门户估算的“主力净流入”当作真实资金流。</div></section>
-<section><div class="section-head"><h2>二级方向候选</h2><span>从前 {一级方向展示数} 个一级方向中，各取前 {每个一级二级候选数} 个二级行业</span></div><div class="table-wrap"><table><thead><tr><th>二级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{second_rows}</tbody></table></div></section>
-<section><div class="section-head"><h2>细分主线</h2><span>由叶子行业强度产生，不与上级行业重复排名</span></div><div class="table-wrap"><table><thead><tr><th>叶子行业</th><th>阶段</th><th>强度分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>趋势完整度</th><th>量能比</th><th>成分数</th><th>数据源</th><th>提示</th></tr></thead><tbody>{''.join(leaf_rows)}</tbody></table></div><div class="notice">叶子行业用于全覆盖和细分识别；一级、二级结果由其向上聚合。成分少于 5 只的细分只降低置信度，不直接删除。停止更新的申万三级指数使用当前成分权重合成代理走势，并在数据源列明确标注。</div></section>
-<section><div class="section-head"><h2>概念独立确认</h2><span>概念与申万行业分开评分，仅用成分交叉验证细分主线</span></div><div class="table-wrap"><table><thead><tr><th>概念</th><th>概念分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>状态</th><th>最相关细分</th><th>交叉</th></tr></thead><tbody>{''.join(concept_rows)}</tbody></table></div></section>
+<section><div class="section-head"><h2>一级资金方向</h2><span>共 {len(first_all)} 个一级行业，按方向得分排序</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>一级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{first_rows}</tbody></table></div><div class="notice">这里的“资金方向”由相对收益、行业扩散、排名持续性、趋势和量能共同代理，不把门户估算的“主力净流入”当作真实资金流。</div></section>
+<section><div class="section-head"><h2>二级方向候选</h2><span>从前 {一级方向展示数} 个一级方向中，各取前 {每个一级二级候选数} 个二级行业</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>二级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{second_rows}</tbody></table></div></section>
+<section><div class="section-head"><h2>细分主线</h2><span>由叶子行业强度产生，不与上级行业重复排名</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>叶子行业</th><th>阶段</th><th>强度分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>趋势完整度</th><th>量能比</th><th>成分数</th><th>数据源</th><th>提示</th></tr></thead><tbody>{''.join(leaf_rows)}</tbody></table></div><div class="notice">叶子行业用于全覆盖和细分识别；一级、二级结果由其向上聚合。成分少于 5 只的细分只降低置信度，不直接删除。停止更新的申万三级指数使用当前成分权重合成代理走势，并在数据源列明确标注。</div></section>
+<section><div class="section-head"><h2>概念独立确认</h2><span>概念与申万行业分开评分，仅用成分交叉验证细分主线</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>概念</th><th>概念分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>状态</th><th>最相关细分</th><th>交叉</th></tr></thead><tbody>{''.join(concept_rows)}</tbody></table></div></section>
 {''.join(stock_sections)}
-<section><div class="section-head"><h2>主线替代工具</h2><span>ETF 与个股不混合排名</span></div><div class="table-wrap"><table><thead><tr><th>对应主线</th><th>ETF</th><th>成交额</th><th>规模代理</th><th>边界</th></tr></thead><tbody>{''.join(etf_rows) or '<tr><td colspan=5>暂无名称匹配的 ETF</td></tr>'}</tbody></table></div></section>
+<section><div class="section-head"><h2>主线替代工具</h2><span>ETF 与个股不混合排名</span></div><div class="table-wrap" data-collapse-limit="3"><table><thead><tr><th>对应主线</th><th>ETF</th><th>成交额</th><th>规模代理</th><th>边界</th></tr></thead><tbody>{''.join(etf_rows) or '<tr><td colspan=5>暂无名称匹配的 ETF</td></tr>'}</tbody></table></div></section>
 <footer>本看板解决主线方向和第一梯队身份识别，不给出收益承诺，也不替代买卖时点判断。产业地位目前仍以申万成分关系、市值和收入规模代理衡量，主营收入纯度、市场份额和订单证据需人工核验。</footer>
 <script>
+function setupCollapsibleTables() {{
+  document.querySelectorAll('.table-wrap[data-collapse-limit]').forEach((wrapper, index) => {{
+    const limit = Number.parseInt(wrapper.dataset.collapseLimit || '0', 10);
+    const tbody = wrapper.querySelector('tbody');
+    if (!tbody || limit < 1) return;
+    const rows = Array.from(tbody.children).filter((row) => row.tagName === 'TR');
+    if (rows.length <= limit) return;
+
+    tbody.id = `collapsible-table-${{index}}`;
+    const hiddenCount = rows.length - limit;
+    const control = document.createElement('div');
+    control.className = 'table-toggle-row';
+    control.innerHTML = `<button class="table-toggle" type="button" aria-expanded="false" aria-controls="${{tbody.id}}"><span class="table-toggle-icon" aria-hidden="true">⌄</span><span class="table-toggle-text"></span></button>`;
+    wrapper.insertAdjacentElement('afterend', control);
+
+    const button = control.querySelector('.table-toggle');
+    const icon = control.querySelector('.table-toggle-icon');
+    const label = control.querySelector('.table-toggle-text');
+    const setExpanded = (expanded) => {{
+      rows.forEach((row, rowIndex) => row.classList.toggle('is-collapsed', !expanded && rowIndex >= limit));
+      button.setAttribute('aria-expanded', String(expanded));
+      icon.textContent = expanded ? '⌃' : '⌄';
+      label.textContent = expanded ? `收起到前 ${{limit}} 条` : `展开其余 ${{hiddenCount}} 条`;
+    }};
+    button.addEventListener('click', () => setExpanded(button.getAttribute('aria-expanded') !== 'true'));
+    setExpanded(false);
+  }});
+}}
+
 async function refreshMarket() {{
   const button = document.getElementById('refresh-button');
   const status = document.getElementById('refresh-status');
@@ -933,6 +962,7 @@ async function refreshMarket() {{
     button.classList.remove('loading');
   }}
 }}
+document.addEventListener('DOMContentLoaded', setupCollapsibleTables);
 </script>
 </body></html>"""
     (结果目录 / "申万分层主线看板.html").write_text(document, encoding="utf-8-sig")
