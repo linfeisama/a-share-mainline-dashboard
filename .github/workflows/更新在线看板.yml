@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: "a-share-dashboard-pages"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 准备Python
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -34,6 +35,7 @@ jobs:
           cache-dependency-path: "依赖清单.txt"
 
       - name: 恢复市场数据缓存
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/cache@v4
         with:
           path: 缓存
@@ -42,9 +44,11 @@ jobs:
             市场数据-${{ runner.os }}-
 
       - name: 安装数据组件
+        if: github.event_name == 'workflow_dispatch'
         run: python -m pip install -r "依赖清单.txt"
 
       - name: 生成最新看板
+        if: github.event_name == 'workflow_dispatch'
         run: python "运行一次.py"
 
       - name: 配置网页发布
