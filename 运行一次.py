@@ -791,6 +791,11 @@ def TradingView链接(code: str) -> str:
     return f"https://www.tradingview.com/chart/?symbol={exchange}%3A{code}"
 
 
+def 新浪个股链接(code: str) -> str:
+    market = "sh" if str(code).startswith("6") else "sz"
+    return f"https://quotes.sina.cn/hs/company/quotes/view/{market}{code}"
+
+
 def 行业表格行(frame: pd.DataFrame, name_column: str) -> str:
     rows = []
     for _, row in frame.iterrows():
@@ -849,9 +854,12 @@ def 生成看板(
         stock_rows = []
         for _, stock in group.iterrows():
             chart_url = TradingView链接(str(stock["股票代码"]))
+            mobile_url = 新浪个股链接(str(stock["股票代码"]))
             stock_rows.append(
-                f"<tr><td><a class='stock-link' href='{chart_url}' target='_blank' rel='noopener noreferrer'>"
-                f"<strong>{html.escape(stock['股票名称'])}</strong><small>{stock['股票代码']} · {html.escape(stock['行业'])} · 打开图表</small></a></td>"
+                f"<tr><td><a class='stock-link' href='{chart_url}' data-desktop-url='{chart_url}' data-mobile-url='{mobile_url}' "
+                "target='_blank' rel='noopener noreferrer' title='在 TradingView 打开'>"
+                f"<strong>{html.escape(stock['股票名称'])}</strong><small>{stock['股票代码']} · {html.escape(stock['行业'])} · "
+                "<span class='stock-link-source'>TradingView图表</span></small></a></td>"
                 f"<td>{html.escape(stock['评价状态'])}</td><td>{stock['第一梯队总分']:.1f}</td>"
                 f"<td>{stock['产业地位代理分']:.1f}</td><td>{stock['基本面质量分']:.1f}</td>"
                 f"<td>{stock['增长持续性分']:.1f}</td><td>{stock['中长期认可分']:.1f}</td>"
@@ -927,6 +935,22 @@ function setupCollapsibleTables() {{
   }});
 }}
 
+function setupStockLinks() {{
+  const userAgent = navigator.userAgent || '';
+  const mobileHint = navigator.userAgentData?.mobile === true;
+  const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+  const touchIPad = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  const touchTablet = navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches;
+  const useMobileLinks = mobileHint || mobileUserAgent || touchIPad || touchTablet;
+
+  document.querySelectorAll('.stock-link[data-desktop-url][data-mobile-url]').forEach((link) => {{
+    const source = link.querySelector('.stock-link-source');
+    link.href = useMobileLinks ? link.dataset.mobileUrl : link.dataset.desktopUrl;
+    link.title = useMobileLinks ? '在新浪财经打开' : '在 TradingView 打开';
+    if (source) source.textContent = useMobileLinks ? '新浪详情' : 'TradingView图表';
+  }});
+}}
+
 async function refreshMarket() {{
   const button = document.getElementById('refresh-button');
   const status = document.getElementById('refresh-status');
@@ -962,7 +986,10 @@ async function refreshMarket() {{
     button.classList.remove('loading');
   }}
 }}
-document.addEventListener('DOMContentLoaded', setupCollapsibleTables);
+document.addEventListener('DOMContentLoaded', () => {{
+  setupCollapsibleTables();
+  setupStockLinks();
+}});
 </script>
 </body></html>"""
     (结果目录 / "申万分层主线看板.html").write_text(document, encoding="utf-8-sig")
