@@ -928,28 +928,82 @@ def 生成看板(
                 f"<td>{旧工具.金额(row['成交额'])}</td><td>{旧工具.金额(row['规模代理'])}</td><td>{html.escape(row['评价说明'])}</td></tr>"
             )
 
+    指标说明 = """
+<div id="metric-help" class="help-popover" role="tooltip">
+  <div class="help-heading">指标口径说明</div>
+  <div class="help-grid">
+    <div class="help-group">
+      <h3>行业与概念</h3>
+      <dl>
+        <div><dt>阶段</dt><dd>按方向分、扩散和持续率划分为扩散、确认、形成、萌芽或观察。</dd></div>
+        <div><dt>方向分</dt><dd>同层相对综合分：20日超额20%、60日超额20%、持续率20%、20日扩散15%、60日扩散10%、趋势10%、量能5%。</dd></div>
+        <div><dt>20/60日超额</dt><dd>行业同期收益减去沪深300同期收益。</dd></div>
+        <div><dt>20/60日扩散</dt><dd>下属叶子行业中取得正超额收益的加权占比，权重为成分数量的平方根。</dd></div>
+        <div><dt>持续率</dt><dd>近10个交易日进入同层20日超额排名前30%的天数比例。</dd></div>
+        <div><dt>趋势完整度</dt><dd>收盘高于20日均线且20日均线高于60日均线、20日收益为正、60日收益为正，各占三分之一。</dd></div>
+        <div><dt>量能比</dt><dd>近5日平均成交额除以近20日平均成交额。</dd></div>
+        <div><dt>强度分</dt><dd>叶子行业的20/60日超额、持续率、趋势、量能和年内超额综合分，并对小样本降权。</dd></div>
+        <div><dt>概念分</dt><dd>概念的20/60日超额、持续率、量能和当日上涨广度综合分。</dd></div>
+        <div><dt>交叉</dt><dd>概念与相关细分主线的成分重合比例，以及实际重合股票数量。</dd></div>
+      </dl>
+    </div>
+    <div class="help-group">
+      <h3>个股</h3>
+      <dl>
+        <div><dt>总分</dt><dd>产业30分、质量30分、增长20分、长期认可15分、可投资性5分，减去风险扣分。</dd></div>
+        <div><dt>产业</dt><dd>同一细分行业内的总市值和营业收入相对位置，作为产业地位代理。</dd></div>
+        <div><dt>质量</dt><dd>非金融股综合ROE、ROIC、现金质量、毛利率和负债；金融股综合ROE、利润增长、不良率和拨备覆盖。</dd></div>
+        <div><dt>增长</dt><dd>同业营收增长、利润增长相对位置，并结合近四期盈利为正比例。</dd></div>
+        <div><dt>长期认可</dt><dd>相对沪深300的6个月和12个月超额收益，经年化波动率调整后的同业相对位置。</dd></div>
+        <div><dt>角色</dt><dd>依据产业、业绩和长期市场认可，标记产业核心、业绩核心或市场核心。</dd></div>
+        <div><dt>置信</dt><dd>核心财务和价格字段覆盖率：A不低于85%，B不低于65%，其余为C。</dd></div>
+        <div><dt>风险</dt><dd>利润为负、现金利润背离、高负债或营收利润快速下降等量化风险提示。</dd></div>
+      </dl>
+    </div>
+  </div>
+  <p class="help-footnote">所有分数用于同层比较，不评价当前价格位置，也不构成买卖建议。</p>
+</div>"""
+
     document = f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>申万分层主线与第一梯队看板</title>
+<script>try{{const savedTheme=localStorage.getItem('dashboard-theme');if(savedTheme==='light'||savedTheme==='dark')document.documentElement.dataset.theme=savedTheme;}}catch(_error){{}}</script>
 <style>
-:root{{--ink:#e9edf0;--muted:#94a0a8;--line:#343b3f;--paper:#111416;--panel:#181c1f;--panel2:#202529;--green:#55d68b;--amber:#f0bd5b;--red:#ff7474;--cyan:#63c9da;--violet:#c39af2}}
-*{{box-sizing:border-box}}html,body{{max-width:100%;overflow-x:hidden}}body{{margin:0;color:var(--ink);background:var(--paper);font-family:"Microsoft YaHei","Segoe UI",sans-serif;font-size:14px;letter-spacing:0;color-scheme:dark}}
-header{{padding:28px 4vw 22px;border-bottom:1px solid var(--line);background:#15191b}}.header-row{{display:flex;align-items:center;justify-content:space-between;gap:24px}}.header-copy{{min-width:0}}h1{{font-size:26px;line-height:1.35;margin:0 0 8px;color:#fff}}h2{{font-size:18px;margin:0;color:#f4f6f7}}p{{margin:5px 0;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}}
-.refresh-button{{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 14px;border:1px solid #4b565c;border-radius:6px;background:#22282b;color:#eef3f5;font:inherit;font-weight:700;cursor:pointer}}.refresh-button:hover{{border-color:var(--cyan);color:var(--cyan)}}.refresh-button:disabled{{cursor:wait;opacity:.65}}.refresh-icon{{font-size:20px;line-height:1}}.refresh-button.loading .refresh-icon{{animation:spin .9s linear infinite}}.refresh-status{{min-height:20px;margin-top:8px;color:var(--muted);font-size:13px}}.refresh-status.error{{color:var(--red)}}.refresh-status.success{{color:var(--green)}}@keyframes spin{{to{{transform:rotate(360deg)}}}}
-.summary{{display:grid;grid-template-columns:repeat(5,minmax(135px,1fr));gap:1px;background:var(--line);border-bottom:1px solid var(--line)}}.metric{{min-width:0;background:var(--panel);padding:18px 2.5vw}}.metric b{{display:block;font-size:20px;margin-top:5px;color:#fff}}
-section{{padding:24px 4vw;border-bottom:1px solid var(--line)}}section:nth-of-type(even){{background:#14181a}}.section-head{{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}}.section-head span{{color:var(--muted)}}
-.table-wrap{{width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}}table{{width:100%;border-collapse:collapse;min-width:960px}}th,td{{padding:10px 11px;border-bottom:1px solid #2b3236;text-align:left;vertical-align:top}}th{{background:var(--panel2);font-weight:600;white-space:nowrap;color:#cfd6da}}tbody tr:hover{{background:#20272a}}tbody tr.is-collapsed{{display:none}}tr:last-child td{{border-bottom:0}}small{{display:block;color:var(--muted);margin-top:4px}}.table-toggle-row{{display:flex;justify-content:center;margin-top:10px}}.table-toggle{{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:0 12px;border:1px solid #424c51;border-radius:6px;background:#1b2023;color:#cbd3d7;font:inherit;cursor:pointer}}.table-toggle:hover{{border-color:var(--cyan);color:var(--cyan)}}.table-toggle-icon{{width:16px;font-size:18px;line-height:1;text-align:center}}
-.phase{{font-weight:700}}.p-扩散,.p-确认{{color:var(--green)}}.p-形成,.p-萌芽{{color:var(--amber)}}.p-观察{{color:var(--muted)}}.notice{{border-left:3px solid var(--amber);padding:10px 14px;background:#242117;color:#d8c596;margin-top:14px}}.industry-link,.stock-link{{color:var(--cyan);text-decoration:none}}.industry-link:hover,.stock-link:hover strong{{text-decoration:underline}}.stock-link{{display:block}}.stock-link small{{color:#8daeb4}}footer{{padding:20px 4vw 35px;color:var(--muted);background:#0e1112}}
-@media(max-width:760px){{.summary{{grid-template-columns:repeat(2,minmax(0,1fr))}}header,section{{padding-left:18px;padding-right:18px}}.header-row{{align-items:flex-start;flex-direction:column;gap:14px}}h1{{font-size:22px}}small{{overflow-wrap:anywhere}}.section-head{{align-items:start;flex-direction:column}}.section-head span{{line-height:1.5}}.metric:last-child{{grid-column:1/-1}}}}
+:root{{--ink:#e9edf0;--strong:#ffffff;--muted:#94a0a8;--line:#343b3f;--paper:#111416;--header:#15191b;--panel:#181c1f;--panel2:#202529;--section-alt:#14181a;--row-line:#2b3236;--row-hover:#20272a;--button:#22282b;--button-border:#4b565c;--notice:#242117;--notice-ink:#d8c596;--footer:#0e1112;--green:#55d68b;--amber:#f0bd5b;--red:#ff7474;--cyan:#63c9da;--tab-active:#17353b;color-scheme:dark}}
+:root[data-theme="light"]{{--ink:#263238;--strong:#101719;--muted:#617078;--line:#d3dce0;--paper:#f4f6f7;--header:#ffffff;--panel:#ffffff;--panel2:#eaf0f2;--section-alt:#f9fbfb;--row-line:#e1e7ea;--row-hover:#edf7f8;--button:#f8fafb;--button-border:#b8c4ca;--notice:#fff8e7;--notice-ink:#66501c;--footer:#e9eef0;--green:#137a42;--amber:#9a6500;--red:#c83c3c;--cyan:#087f91;--tab-active:#dff3f5;color-scheme:light}}
+*{{box-sizing:border-box}}html,body{{max-width:100%;overflow-x:hidden}}body{{margin:0;color:var(--ink);background:var(--paper);font-family:"Microsoft YaHei","Segoe UI",sans-serif;font-size:14px;letter-spacing:0}}button{{font-family:inherit}}header{{padding:26px 4vw 18px;border-bottom:1px solid var(--line);background:var(--header)}}.header-row{{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}}.header-copy{{min-width:0}}.title-row{{display:flex;align-items:center;gap:10px;position:relative}}h1{{font-size:26px;line-height:1.35;margin:0;color:var(--strong)}}h2{{font-size:18px;margin:0;color:var(--strong)}}p{{margin:5px 0;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}}
+.header-actions{{flex:0 0 auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}}.icon-button{{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--button-border);border-radius:50%;background:var(--button);color:var(--ink);font-size:17px;font-weight:800;cursor:pointer}}.icon-button:hover,.icon-button:focus-visible{{border-color:var(--cyan);color:var(--cyan);outline:none}}.help-wrap{{position:relative;flex:0 0 auto}}.help-popover{{position:fixed;left:4vw;top:74px;z-index:30;width:min(680px,92vw);max-height:min(70vh,640px);overflow:auto;padding:18px;border:1px solid var(--line);border-radius:6px;background:var(--panel);box-shadow:0 14px 40px rgba(0,0,0,.28);visibility:hidden;opacity:0;transform:translateY(-5px);pointer-events:none;transition:opacity .14s ease,transform .14s ease,visibility .14s}}.help-wrap:hover .help-popover,.help-wrap:focus-within .help-popover,.help-wrap.is-open .help-popover{{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto}}.help-heading{{font-size:17px;font-weight:800;color:var(--strong);margin-bottom:12px}}.help-grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px}}.help-group h3{{margin:0 0 8px;font-size:15px;color:var(--cyan)}}.help-group dl{{margin:0}}.help-group dl>div{{display:grid;grid-template-columns:82px 1fr;gap:8px;padding:7px 0;border-top:1px solid var(--row-line)}}.help-group dt{{font-weight:700;color:var(--strong)}}.help-group dd{{margin:0;color:var(--muted);line-height:1.55}}.help-footnote{{margin:12px 0 0;padding-top:10px;border-top:1px solid var(--line);font-size:13px}}
+.theme-switch{{display:inline-flex;height:38px;padding:2px;border:1px solid var(--button-border);border-radius:6px;background:var(--button)}}.theme-option{{display:inline-flex;align-items:center;gap:5px;padding:0 10px;border:0;border-radius:4px;background:transparent;color:var(--muted);font:inherit;cursor:pointer}}.theme-option[aria-pressed="true"]{{background:var(--tab-active);color:var(--strong);font-weight:700}}.theme-option:focus-visible{{outline:2px solid var(--cyan);outline-offset:1px}}.theme-icon{{font-size:16px;line-height:1}}.refresh-button{{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 14px;border:1px solid var(--button-border);border-radius:6px;background:var(--button);color:var(--ink);font:inherit;font-weight:700;cursor:pointer}}.refresh-button:hover{{border-color:var(--cyan);color:var(--cyan)}}.refresh-button:disabled{{cursor:wait;opacity:.65}}.refresh-icon{{font-size:20px;line-height:1}}.refresh-button.loading .refresh-icon{{animation:spin .9s linear infinite}}.refresh-status{{min-height:20px;margin-top:8px;color:var(--muted);font-size:13px}}.refresh-status.error{{color:var(--red)}}.refresh-status.success{{color:var(--green)}}@keyframes spin{{to{{transform:rotate(360deg)}}}}
+.summary{{padding:16px 4vw;background:var(--panel);border-bottom:1px solid var(--line)}}.metric{{min-width:0;display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:baseline;gap:10px 16px}}.metric-label{{font-weight:700;color:var(--muted)}}.metric b{{font-size:22px;color:var(--strong)}}.metric small{{margin:0}}
+.dashboard-tabs{{position:sticky;top:0;z-index:20;display:flex;gap:4px;padding:10px 4vw;border-bottom:1px solid var(--line);background:var(--header);overflow-x:auto}}.tab-button{{flex:0 0 auto;min-width:92px;height:38px;padding:0 16px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-weight:700;cursor:pointer}}.tab-button:hover{{color:var(--strong);background:var(--button)}}.tab-button[aria-selected="true"]{{color:var(--strong);border-color:var(--cyan);background:var(--tab-active)}}.tab-button:focus-visible{{outline:2px solid var(--cyan);outline-offset:1px}}.tab-panel[hidden]{{display:none}}main{{min-height:55vh}}
+.tab-panel>section{{padding:24px 4vw;border-bottom:1px solid var(--line)}}.tab-panel>section:nth-child(even){{background:var(--section-alt)}}.section-head{{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}}.section-head span{{color:var(--muted)}}
+.table-wrap{{width:100%;overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}}table{{width:100%;border-collapse:collapse;min-width:960px}}th,td{{padding:10px 11px;border-bottom:1px solid var(--row-line);text-align:left;vertical-align:top}}th{{background:var(--panel2);font-weight:600;white-space:nowrap;color:var(--ink)}}tbody tr:hover{{background:var(--row-hover)}}tbody tr.is-collapsed{{display:none}}tr:last-child td{{border-bottom:0}}small{{display:block;color:var(--muted);margin-top:4px}}.table-toggle-row{{display:flex;justify-content:center;margin-top:10px}}.table-toggle{{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:34px;padding:0 12px;border:1px solid var(--button-border);border-radius:6px;background:var(--button);color:var(--ink);font:inherit;cursor:pointer}}.table-toggle:hover{{border-color:var(--cyan);color:var(--cyan)}}.table-toggle-icon{{width:16px;font-size:18px;line-height:1;text-align:center}}
+.phase{{font-weight:700}}.p-扩散,.p-确认{{color:var(--green)}}.p-形成,.p-萌芽{{color:var(--amber)}}.p-观察{{color:var(--muted)}}.notice{{border-left:3px solid var(--amber);padding:10px 14px;background:var(--notice);color:var(--notice-ink);margin-top:14px}}.industry-link,.stock-link{{color:var(--cyan);text-decoration:none}}.industry-link:hover,.stock-link:hover strong{{text-decoration:underline}}.stock-link{{display:block}}.stock-link small{{color:var(--muted)}}footer{{padding:20px 4vw 35px;color:var(--muted);background:var(--footer)}}
+@media(max-width:760px){{header,.tab-panel>section{{padding-left:18px;padding-right:18px}}.header-row{{gap:16px;flex-direction:column}}.header-actions{{justify-content:flex-start}}h1{{font-size:22px}}small{{overflow-wrap:anywhere}}.help-popover{{left:18px;right:18px;top:72px;width:auto;max-height:calc(100dvh - 92px)}}.help-grid{{grid-template-columns:1fr}}.summary{{padding:14px 18px}}.metric{{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px}}.metric small{{flex-basis:100%}}.dashboard-tabs{{padding-left:18px;padding-right:18px}}.tab-button{{min-width:80px;padding:0 13px}}.section-head{{align-items:start;flex-direction:column}}.section-head span{{line-height:1.5}}}}
+@media(max-width:430px){{.theme-option{{padding:0 9px}}.refresh-button{{padding:0 11px}}.help-group dl>div{{grid-template-columns:74px 1fr}}}}
 </style></head><body>
-<header><div class="header-row"><div class="header-copy"><h1>申万分层主线与第一梯队看板</h1><p>行情日期 {market_date} · 生成时间 {generated} · 不评价当前位置和买卖时点</p></div><button id="refresh-button" class="refresh-button" type="button" onclick="refreshMarket()" title="重新获取行情并生成看板"><span class="refresh-icon" aria-hidden="true">↻</span><span>更新行情</span></button></div><div id="refresh-status" class="refresh-status" role="status" aria-live="polite"></div></header>
-<div class="summary"><div class="metric">市场状态<b>{state}</b><small>{state_reason}</small></div><div class="metric">一级行业<b>{len(first_all)}</b><small>同层比较</small></div><div class="metric">二级行业<b>{len(second_all)}</b><small>同层比较</small></div><div class="metric">叶子行业<b>{len(leaf_all)}</b><small>全覆盖计算底座</small></div><div class="metric">概念板块<b>{len(concept_confirm)}</b><small>独立确认，不混排</small></div></div>
-<section><div class="section-head"><h2>一级资金方向</h2><span>共 {len(first_all)} 个一级行业，按方向得分排序</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>一级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{first_rows}</tbody></table></div><div class="notice">这里的“资金方向”由相对收益、行业扩散、排名持续性、趋势和量能共同代理，不把门户估算的“主力净流入”当作真实资金流。</div></section>
-<section><div class="section-head"><h2>二级方向候选</h2><span>从前 {一级方向展示数} 个一级方向中，各取前 {每个一级二级候选数} 个二级行业</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>二级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{second_rows}</tbody></table></div></section>
-<section><div class="section-head"><h2>细分主线</h2><span>由叶子行业强度产生，不与上级行业重复排名</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>叶子行业</th><th>阶段</th><th>强度分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>趋势完整度</th><th>量能比</th><th>成分数</th><th>数据源</th><th>提示</th></tr></thead><tbody>{''.join(leaf_rows)}</tbody></table></div><div class="notice">叶子行业用于全覆盖和细分识别；一级、二级结果由其向上聚合。成分少于 5 只的细分只降低置信度，不直接删除。停止更新的申万三级指数使用当前成分权重合成代理走势，并在数据源列明确标注。</div></section>
-<section><div class="section-head"><h2>概念独立确认</h2><span>概念与申万行业分开评分，仅用成分交叉验证细分主线</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>概念</th><th>概念分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>状态</th><th>最相关细分</th><th>交叉</th></tr></thead><tbody>{''.join(concept_rows)}</tbody></table></div></section>
-{''.join(stock_sections)}
-<section><div class="section-head"><h2>主线替代工具</h2><span>ETF 与个股不混合排名</span></div><div class="table-wrap" data-collapse-limit="3"><table><thead><tr><th>对应主线</th><th>ETF</th><th>成交额</th><th>规模代理</th><th>边界</th></tr></thead><tbody>{''.join(etf_rows) or '<tr><td colspan=5>暂无名称匹配的 ETF</td></tr>'}</tbody></table></div></section>
+<header><div class="header-row"><div class="header-copy"><div class="title-row"><h1>申万分层主线与第一梯队看板</h1><div class="help-wrap"><button id="help-button" class="icon-button" type="button" aria-label="查看指标口径说明" aria-expanded="false" aria-controls="metric-help" title="指标口径说明">?</button>{指标说明}</div></div><p>行情日期 {market_date} · 生成时间 {generated} · 不评价当前位置和买卖时点</p></div><div class="header-actions"><div class="theme-switch" role="group" aria-label="界面主题"><button class="theme-option" type="button" data-theme-choice="light" aria-pressed="false" title="切换到明亮模式"><span class="theme-icon" aria-hidden="true">☀</span><span class="theme-label">明亮</span></button><button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="true" title="切换到深色模式"><span class="theme-icon" aria-hidden="true">☾</span><span class="theme-label">深色</span></button></div><button id="refresh-button" class="refresh-button" type="button" onclick="refreshMarket()" title="重新获取行情并生成看板"><span class="refresh-icon" aria-hidden="true">↻</span><span>更新行情</span></button></div></div><div id="refresh-status" class="refresh-status" role="status" aria-live="polite"></div></header>
+<div class="summary"><div class="metric"><span class="metric-label">市场状态</span><b>{state}</b><small>{state_reason}</small></div></div>
+<nav class="dashboard-tabs" role="tablist" aria-label="看板内容">
+  <button id="tab-industry" class="tab-button" type="button" role="tab" aria-selected="true" aria-controls="panel-industry" tabindex="0">行业</button>
+  <button id="tab-concept" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="panel-concept" tabindex="-1">概念</button>
+  <button id="tab-stock" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="panel-stock" tabindex="-1">个股</button>
+  <button id="tab-etf" class="tab-button" type="button" role="tab" aria-selected="false" aria-controls="panel-etf" tabindex="-1">ETF</button>
+</nav>
+<main>
+<div id="panel-industry" class="tab-panel" role="tabpanel" aria-labelledby="tab-industry">
+  <section><div class="section-head"><h2>一级资金方向</h2><span>共 {len(first_all)} 个一级行业，按方向得分排序</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>一级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{first_rows}</tbody></table></div><div class="notice">这里的“资金方向”由相对收益、行业扩散、排名持续性、趋势和量能共同代理，不把门户估算的“主力净流入”当作真实资金流。</div></section>
+  <section><div class="section-head"><h2>二级方向候选</h2><span>从前 {一级方向展示数} 个一级方向中，各取前 {每个一级二级候选数} 个二级行业</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>二级行业</th><th>阶段</th><th>方向分</th><th>20日超额</th><th>60日超额</th><th>20日扩散</th><th>60日扩散</th><th>持续率</th><th>叶子数</th><th>成分覆盖</th></tr></thead><tbody>{second_rows}</tbody></table></div></section>
+  <section><div class="section-head"><h2>细分主线</h2><span>由叶子行业强度产生，不与上级行业重复排名</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>叶子行业</th><th>阶段</th><th>强度分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>趋势完整度</th><th>量能比</th><th>成分数</th><th>数据源</th><th>提示</th></tr></thead><tbody>{''.join(leaf_rows)}</tbody></table></div><div class="notice">叶子行业用于全覆盖和细分识别；一级、二级结果由其向上聚合。成分少于 5 只的细分只降低置信度，不直接删除。停止更新的申万三级指数使用当前成分权重合成代理走势，并在数据源列明确标注。</div></section>
+</div>
+<div id="panel-concept" class="tab-panel" role="tabpanel" aria-labelledby="tab-concept" hidden>
+  <section><div class="section-head"><h2>概念独立确认</h2><span>概念与申万行业分开评分，仅用成分交叉验证细分主线</span></div><div class="table-wrap" data-collapse-limit="5"><table><thead><tr><th>概念</th><th>概念分</th><th>20日超额</th><th>60日超额</th><th>持续率</th><th>状态</th><th>最相关细分</th><th>交叉</th></tr></thead><tbody>{''.join(concept_rows)}</tbody></table></div></section>
+</div>
+<div id="panel-stock" class="tab-panel" role="tabpanel" aria-labelledby="tab-stock" hidden>{''.join(stock_sections)}</div>
+<div id="panel-etf" class="tab-panel" role="tabpanel" aria-labelledby="tab-etf" hidden>
+  <section><div class="section-head"><h2>主线替代工具</h2><span>ETF 与个股不混合排名</span></div><div class="table-wrap" data-collapse-limit="3"><table><thead><tr><th>对应主线</th><th>ETF</th><th>成交额</th><th>规模代理</th><th>边界</th></tr></thead><tbody>{''.join(etf_rows) or '<tr><td colspan=5>暂无名称匹配的 ETF</td></tr>'}</tbody></table></div></section>
+</div>
+</main>
 <footer>本看板解决主线方向和第一梯队身份识别，不给出收益承诺，也不替代买卖时点判断。产业地位目前仍以申万成分关系、市值和收入规模代理衡量，主营收入纯度、市场份额和订单证据需人工核验。</footer>
 <script>
 function setupCollapsibleTables() {{
@@ -997,6 +1051,81 @@ function setupStockLinks() {{
   }});
 }}
 
+function setupThemeSwitch() {{
+  const root = document.documentElement;
+  const buttons = Array.from(document.querySelectorAll('[data-theme-choice]'));
+  const applyTheme = (theme, remember = true) => {{
+    root.dataset.theme = theme;
+    buttons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.themeChoice === theme)));
+    if (remember) {{
+      try {{ localStorage.setItem('dashboard-theme', theme); }} catch (_error) {{}}
+    }}
+  }};
+  const initialTheme = root.dataset.theme === 'light' ? 'light' : 'dark';
+  applyTheme(initialTheme, false);
+  buttons.forEach((button) => button.addEventListener('click', () => applyTheme(button.dataset.themeChoice)));
+}}
+
+function setupHelpPopover() {{
+  const button = document.getElementById('help-button');
+  const wrapper = button?.closest('.help-wrap');
+  if (!button || !wrapper) return;
+  const closeHelp = () => {{
+    wrapper.classList.remove('is-open');
+    button.setAttribute('aria-expanded', 'false');
+  }};
+  button.addEventListener('click', (event) => {{
+    event.stopPropagation();
+    const open = !wrapper.classList.contains('is-open');
+    wrapper.classList.toggle('is-open', open);
+    button.setAttribute('aria-expanded', String(open));
+  }});
+  wrapper.addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', closeHelp);
+  document.addEventListener('keydown', (event) => {{
+    if (event.key === 'Escape') {{
+      closeHelp();
+      button.focus();
+    }}
+  }});
+}}
+
+function setupTabs() {{
+  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+  const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+  if (!tabs.length) return;
+  const activateTab = (tab, remember = true) => {{
+    tabs.forEach((item) => {{
+      const active = item === tab;
+      item.setAttribute('aria-selected', String(active));
+      item.tabIndex = active ? 0 : -1;
+    }});
+    panels.forEach((panel) => {{
+      panel.hidden = panel.id !== tab.getAttribute('aria-controls');
+    }});
+    if (remember) {{
+      try {{ localStorage.setItem('dashboard-tab', tab.id); }} catch (_error) {{}}
+    }}
+  }};
+  tabs.forEach((tab, index) => {{
+    tab.addEventListener('click', () => activateTab(tab));
+    tab.addEventListener('keydown', (event) => {{
+      let targetIndex = index;
+      if (event.key === 'ArrowRight') targetIndex = (index + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') targetIndex = (index - 1 + tabs.length) % tabs.length;
+      else if (event.key === 'Home') targetIndex = 0;
+      else if (event.key === 'End') targetIndex = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      activateTab(tabs[targetIndex]);
+      tabs[targetIndex].focus();
+    }});
+  }});
+  let savedId = '';
+  try {{ savedId = localStorage.getItem('dashboard-tab') || ''; }} catch (_error) {{}}
+  activateTab(tabs.find((tab) => tab.id === savedId) || tabs[0], false);
+}}
+
 async function refreshMarket() {{
   const button = document.getElementById('refresh-button');
   const status = document.getElementById('refresh-status');
@@ -1035,6 +1164,9 @@ async function refreshMarket() {{
 document.addEventListener('DOMContentLoaded', () => {{
   setupCollapsibleTables();
   setupStockLinks();
+  setupThemeSwitch();
+  setupHelpPopover();
+  setupTabs();
 }});
 </script>
 </body></html>"""
@@ -1119,10 +1251,24 @@ def main() -> None:
     first_tier = 旧工具.评价第一梯队(member_table) if not member_table.empty else pd.DataFrame()
 
     print("6/8 独立计算概念确认...")
-    concept_confirm = 获取概念确认(benchmark, selected, leaf_members)
+    try:
+        concept_confirm = 获取概念确认(benchmark, selected, leaf_members)
+    except Exception as exc:
+        concept_fallback = 结果目录 / "概念独立确认.csv"
+        if not concept_fallback.exists():
+            raise
+        print(f"概念更新失败，使用上次成功结果：{exc}")
+        concept_confirm = pd.read_csv(concept_fallback)
 
     print("7/8 匹配 ETF 主线替代工具...")
-    etfs = 旧工具.获取ETF替代工具(selected)
+    try:
+        etfs = 旧工具.获取ETF替代工具(selected)
+    except Exception as exc:
+        etf_fallback = 结果目录 / "ETF主线替代工具.csv"
+        if not etf_fallback.exists():
+            raise
+        print(f"ETF 更新失败，使用上次成功结果：{exc}")
+        etfs = pd.read_csv(etf_fallback, dtype={"ETF代码": str})
 
     print("8/8 生成中文静态看板和完整明细...")
     first_summary.to_csv(结果目录 / "一级行业方向_完整31项.csv", index=False, encoding="utf-8-sig")
