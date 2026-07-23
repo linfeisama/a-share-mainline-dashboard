@@ -1,6 +1,9 @@
 缓存/
 结果/
 __pycache__/
+.wrangler/
+.dev.vars
+node_modules/
 *.pyc
 *.pyo
 *.log

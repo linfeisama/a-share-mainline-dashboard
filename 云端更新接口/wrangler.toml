@@ -1,0 +1,15 @@
+name = "a-share-dashboard-refresh"
+main = "更新接口.mjs"
+compatibility_date = "2026-07-23"
+workers_dev = true
+
+[observability.logs]
+enabled = true
+
+[[ratelimits]]
+name = "UPDATE_RATE_LIMITER"
+namespace_id = "318569393"
+
+  [ratelimits.simple]
+  limit = 3
+  period = 60

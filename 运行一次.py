@@ -3,6 +3,8 @@ from __future__ import annotations
 import html
 import importlib.util
 import math
+import os
+import re
 import sys
 import time
 import warnings
@@ -41,6 +43,8 @@ sys.modules[模块规格.name] = 旧工具
 
 申万成分接口 = "https://www.swsresearch.com/institute-sw/api/index_publish/details/component_stocks/"
 东方财富列表接口 = "https://push2.eastmoney.com/api/qt/clist/get"
+腾讯批量行情接口 = "https://qt.gtimg.cn/q="
+申万叶子成分映射文件 = 根目录 / "基础数据" / "申万叶子成分映射.csv"
 请求头 = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36",
     "Referer": "https://www.swsresearch.com/",
@@ -54,6 +58,9 @@ sys.modules[模块规格.name] = 旧工具
 概念确认展示数 = 12
 
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+
+申万代理成分 = pd.DataFrame()
+申万代理行情 = pd.DataFrame()
 
 
 def 获取腾讯日线稳健(code: str, limit: int = 380) -> pd.DataFrame:
@@ -184,9 +191,108 @@ def 获取申万层级() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
     return first, second, third, leaves
 
 
+def 获取腾讯批量行情(codes: list[str]) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
+    batches = [codes[index:index + 80] for index in range(0, len(codes), 80)]
+
+    def 请求批次(batch: list[str]) -> list[dict[str, Any]]:
+        symbols = [
+            ("sh" if code.startswith(("5", "6", "9")) else "sz") + code
+            for code in batch
+        ]
+        response = requests.get(
+            腾讯批量行情接口 + ",".join(symbols),
+            headers={"User-Agent": 请求头["User-Agent"], "Referer": "https://gu.qq.com/"},
+            timeout=12,
+        )
+        response.raise_for_status()
+        rows: list[dict[str, Any]] = []
+        for line in response.content.decode("gbk", errors="ignore").splitlines():
+            match = re.match(r'v_[a-z]+(\d{6})="(.*)";', line)
+            if not match:
+                continue
+            fields = match.group(2).split("~")
+            if len(fields) < 38:
+                continue
+            rows.append(
+                {
+                    "股票代码": match.group(1),
+                    "现价": 数值(fields[3]),
+                    "昨收": 数值(fields[4]),
+                    "今开": 数值(fields[5]),
+                    "最高": 数值(fields[33]),
+                    "最低": 数值(fields[34]),
+                    "成交量": 数值(fields[6]),
+                    "成交额": 数值(fields[37]) * 10000,
+                }
+            )
+        return rows
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures = [pool.submit(请求批次, batch) for batch in batches]
+        for future in as_completed(futures):
+            try:
+                records.extend(future.result())
+            except Exception as exc:
+                print(f"腾讯批量行情分组缺失：{exc}")
+    return pd.DataFrame(records).drop_duplicates("股票代码") if records else pd.DataFrame()
+
+
+def 准备申万当日代理行情() -> None:
+    global 申万代理成分, 申万代理行情
+    if not 申万叶子成分映射文件.exists():
+        return
+    申万代理成分 = pd.read_csv(
+        申万叶子成分映射文件,
+        dtype={"叶子代码": str, "股票代码": str},
+    )
+    codes = sorted(申万代理成分["股票代码"].dropna().astype(str).unique())
+    申万代理行情 = 获取腾讯批量行情(codes)
+    print(f"  云端代理行情覆盖 {len(申万代理行情)}/{len(codes)} 只成分股")
+
+
+def 追加申万当日代理(code: str, cached: pd.DataFrame, market_date: pd.Timestamp) -> pd.DataFrame | None:
+    if cached.empty or 申万代理成分.empty or 申万代理行情.empty:
+        return None
+    members = 申万代理成分[申万代理成分["叶子代码"] == code].copy()
+    if members.empty:
+        return None
+    merged = members.merge(申万代理行情, on="股票代码", how="inner")
+    merged = merged[(merged["现价"] > 0) & (merged["昨收"] > 0)]
+    if len(merged) < max(2, math.ceil(len(members) * 0.60)):
+        return None
+    weights = pd.to_numeric(merged["最新权重"], errors="coerce")
+    if weights.isna().all() or weights.fillna(0).sum() <= 0:
+        weights = pd.Series(1.0, index=merged.index)
+    weights = weights.fillna(0)
+
+    def 加权涨幅(column: str) -> float:
+        valid = merged[column].gt(0) & merged["昨收"].gt(0) & weights.gt(0)
+        if not valid.any():
+            return 0.0
+        returns = merged.loc[valid, column].div(merged.loc[valid, "昨收"]).sub(1)
+        return float(np.average(returns, weights=weights.loc[valid]))
+
+    previous = cached.iloc[-1]
+    row = {
+        "收盘": float(previous["收盘"]) * (1 + 加权涨幅("现价")),
+        "开盘": float(previous["收盘"]) * (1 + 加权涨幅("今开")),
+        "最高": float(previous["收盘"]) * (1 + 加权涨幅("最高")),
+        "最低": float(previous["收盘"]) * (1 + 加权涨幅("最低")),
+        "成交量": 数值(previous.get("成交量")),
+        "成交额": 数值(previous.get("成交额")),
+    }
+    result = pd.concat([cached, pd.DataFrame([row], index=[market_date])]).sort_index()
+    result = result[~result.index.duplicated(keep="last")].tail(420)
+    result.index.name = "日期"
+    result.to_csv(缓存目录 / f"申万指数代理_{code}.csv", encoding="utf-8-sig")
+    return result
+
+
 def 获取申万指数日线(code: str, market_date: pd.Timestamp) -> pd.DataFrame:
     cache = 缓存目录 / f"申万指数_{code}.csv"
     proxy_cache = 缓存目录 / f"申万指数代理_{code}.csv"
+    proxy: pd.DataFrame | None = None
     if proxy_cache.exists():
         try:
             proxy = pd.read_csv(proxy_cache, parse_dates=["日期"]).set_index("日期").sort_index()
@@ -202,6 +308,13 @@ def 获取申万指数日线(code: str, market_date: pd.Timestamp) -> pd.DataFra
                 return cached
         except Exception:
             cached = None
+    baseline = cached
+    if proxy is not None and not proxy.empty and (baseline is None or proxy.index.max() > baseline.index.max()):
+        baseline = proxy
+    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true" and baseline is not None:
+        synthetic = 追加申万当日代理(code, baseline, market_date)
+        if synthetic is not None:
+            return synthetic
     try:
         frame = ak.index_hist_sw(symbol=code, period="day").copy()
         frame["日期"] = pd.to_datetime(frame["日期"])
@@ -211,9 +324,12 @@ def 获取申万指数日线(code: str, market_date: pd.Timestamp) -> pd.DataFra
         frame.to_csv(cache, encoding="utf-8-sig")
         return frame
     except Exception as exc:
-        if cached is not None and not cached.empty:
+        if baseline is not None and not baseline.empty:
+            synthetic = 追加申万当日代理(code, baseline, market_date)
+            if synthetic is not None:
+                return synthetic
             print(f"申万指数 {code} 更新失败，使用缓存：{exc}")
-            return cached
+            return baseline
         raise
 
 
@@ -973,7 +1089,7 @@ def 生成看板(
 :root[data-theme="light"]{{--ink:#263238;--strong:#101719;--muted:#617078;--line:#d3dce0;--paper:#f4f6f7;--header:#ffffff;--panel:#ffffff;--panel2:#eaf0f2;--section-alt:#f9fbfb;--row-line:#e1e7ea;--row-hover:#edf7f8;--button:#f8fafb;--button-border:#b8c4ca;--notice:#fff8e7;--notice-ink:#66501c;--footer:#e9eef0;--green:#137a42;--amber:#9a6500;--red:#c83c3c;--cyan:#087f91;--tab-active:#dff3f5;color-scheme:light}}
 *{{box-sizing:border-box}}html,body{{max-width:100%;overflow-x:hidden}}body{{margin:0;color:var(--ink);background:var(--paper);font-family:"Microsoft YaHei","Segoe UI",sans-serif;font-size:14px;letter-spacing:0}}button{{font-family:inherit}}header{{padding:26px 4vw 18px;border-bottom:1px solid var(--line);background:var(--header)}}.header-row{{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}}.header-copy{{min-width:0}}.title-row{{display:flex;align-items:center;gap:10px;position:relative}}h1{{font-size:26px;line-height:1.35;margin:0;color:var(--strong)}}h2{{font-size:18px;margin:0;color:var(--strong)}}p{{margin:5px 0;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}}
 .header-actions{{flex:0 0 auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}}.icon-button{{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--button-border);border-radius:50%;background:var(--button);color:var(--ink);font-size:17px;font-weight:800;cursor:pointer}}.icon-button:hover,.icon-button:focus-visible{{border-color:var(--cyan);color:var(--cyan);outline:none}}.help-wrap{{position:relative;flex:0 0 auto}}.help-popover{{position:fixed;left:4vw;top:74px;z-index:30;width:min(680px,92vw);max-height:min(70vh,640px);overflow:auto;padding:18px;border:1px solid var(--line);border-radius:6px;background:var(--panel);box-shadow:0 14px 40px rgba(0,0,0,.28);visibility:hidden;opacity:0;transform:translateY(-5px);pointer-events:none;transition:opacity .14s ease,transform .14s ease,visibility .14s}}.help-wrap:hover .help-popover,.help-wrap:focus-within .help-popover,.help-wrap.is-open .help-popover{{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto}}.help-heading{{font-size:17px;font-weight:800;color:var(--strong);margin-bottom:12px}}.help-grid{{display:grid;grid-template-columns:1fr 1fr;gap:20px}}.help-group h3{{margin:0 0 8px;font-size:15px;color:var(--cyan)}}.help-group dl{{margin:0}}.help-group dl>div{{display:grid;grid-template-columns:82px 1fr;gap:8px;padding:7px 0;border-top:1px solid var(--row-line)}}.help-group dt{{font-weight:700;color:var(--strong)}}.help-group dd{{margin:0;color:var(--muted);line-height:1.55}}.help-footnote{{margin:12px 0 0;padding-top:10px;border-top:1px solid var(--line);font-size:13px}}
-.theme-switch{{display:inline-flex;height:38px;padding:2px;border:1px solid var(--button-border);border-radius:6px;background:var(--button)}}.theme-option{{display:inline-flex;align-items:center;gap:5px;padding:0 10px;border:0;border-radius:4px;background:transparent;color:var(--muted);font:inherit;cursor:pointer}}.theme-option[aria-pressed="true"]{{background:var(--tab-active);color:var(--strong);font-weight:700}}.theme-option:focus-visible{{outline:2px solid var(--cyan);outline-offset:1px}}.theme-icon{{font-size:16px;line-height:1}}.refresh-button{{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 14px;border:1px solid var(--button-border);border-radius:6px;background:var(--button);color:var(--ink);font:inherit;font-weight:700;cursor:pointer}}.refresh-button:hover{{border-color:var(--cyan);color:var(--cyan)}}.refresh-button:disabled{{cursor:wait;opacity:.65}}.refresh-icon{{font-size:20px;line-height:1}}.refresh-button.loading .refresh-icon{{animation:spin .9s linear infinite}}.refresh-status{{min-height:20px;margin-top:8px;color:var(--muted);font-size:13px}}.refresh-status.error{{color:var(--red)}}.refresh-status.success{{color:var(--green)}}@keyframes spin{{to{{transform:rotate(360deg)}}}}
+.theme-switch{{display:inline-flex;height:38px;padding:2px;border:1px solid var(--button-border);border-radius:6px;background:var(--button)}}.theme-option{{display:inline-flex;align-items:center;gap:5px;padding:0 10px;border:0;border-radius:4px;background:transparent;color:var(--muted);font:inherit;cursor:pointer}}.theme-option[aria-pressed="true"]{{background:var(--tab-active);color:var(--strong);font-weight:700}}.theme-option:focus-visible{{outline:2px solid var(--cyan);outline-offset:1px}}.theme-icon{{font-size:16px;line-height:1}}.refresh-button{{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;height:38px;padding:0 14px;border:1px solid var(--button-border);border-radius:6px;background:var(--button);color:var(--ink);font:inherit;font-weight:700;cursor:pointer}}.refresh-button:hover{{border-color:var(--cyan);color:var(--cyan)}}.refresh-button:disabled{{cursor:wait;opacity:.65}}.refresh-icon{{font-size:20px;line-height:1}}.refresh-loading{{flex:0 0 auto;width:22px;height:22px;object-fit:contain}}.refresh-loading[hidden]{{display:none}}.refresh-status{{min-height:20px;margin-top:8px;color:var(--muted);font-size:13px}}.refresh-status.error{{color:var(--red)}}.refresh-status.success{{color:var(--green)}}
 .summary{{padding:16px 4vw;background:var(--panel);border-bottom:1px solid var(--line)}}.metric{{min-width:0;display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:baseline;gap:10px 16px}}.metric-label{{font-weight:700;color:var(--muted)}}.metric b{{font-size:22px;color:var(--strong)}}.metric small{{margin:0}}
 .dashboard-tabs{{position:sticky;top:0;z-index:20;display:flex;gap:4px;padding:10px 4vw;border-bottom:1px solid var(--line);background:var(--header);overflow-x:auto}}.tab-button{{flex:0 0 auto;min-width:92px;height:38px;padding:0 16px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-weight:700;cursor:pointer}}.tab-button:hover{{color:var(--strong);background:var(--button)}}.tab-button[aria-selected="true"]{{color:var(--strong);border-color:var(--cyan);background:var(--tab-active)}}.tab-button:focus-visible{{outline:2px solid var(--cyan);outline-offset:1px}}.tab-panel[hidden]{{display:none}}main{{min-height:55vh}}
 .tab-panel>section{{padding:24px 4vw;border-bottom:1px solid var(--line)}}.tab-panel>section:nth-child(even){{background:var(--section-alt)}}.section-head{{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}}.section-head span{{color:var(--muted)}}
@@ -982,7 +1098,7 @@ def 生成看板(
 @media(max-width:760px){{header,.tab-panel>section{{padding-left:18px;padding-right:18px}}.header-row{{gap:16px;flex-direction:column}}.header-actions{{justify-content:flex-start}}h1{{font-size:22px}}small{{overflow-wrap:anywhere}}.help-popover{{left:18px;right:18px;top:72px;width:auto;max-height:calc(100dvh - 92px)}}.help-grid{{grid-template-columns:1fr}}.summary{{padding:14px 18px}}.metric{{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px}}.metric small{{flex-basis:100%}}.dashboard-tabs{{padding-left:18px;padding-right:18px}}.tab-button{{min-width:80px;padding:0 13px}}.section-head{{align-items:start;flex-direction:column}}.section-head span{{line-height:1.5}}}}
 @media(max-width:430px){{.theme-option{{padding:0 9px}}.refresh-button{{padding:0 11px}}.help-group dl>div{{grid-template-columns:74px 1fr}}}}
 </style></head><body>
-<header><div class="header-row"><div class="header-copy"><div class="title-row"><h1>申万分层主线与第一梯队看板</h1><div class="help-wrap"><button id="help-button" class="icon-button" type="button" aria-label="查看指标口径说明" aria-expanded="false" aria-controls="metric-help" title="指标口径说明">?</button>{指标说明}</div></div><p>行情日期 {market_date} · 生成时间 {generated} · 不评价当前位置和买卖时点</p></div><div class="header-actions"><div class="theme-switch" role="group" aria-label="界面主题"><button class="theme-option" type="button" data-theme-choice="light" aria-pressed="false" title="切换到明亮模式"><span class="theme-icon" aria-hidden="true">☀</span><span class="theme-label">明亮</span></button><button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="true" title="切换到深色模式"><span class="theme-icon" aria-hidden="true">☾</span><span class="theme-label">深色</span></button></div><button id="refresh-button" class="refresh-button" type="button" onclick="refreshMarket()" title="重新获取行情并生成看板"><span class="refresh-icon" aria-hidden="true">↻</span><span>更新行情</span></button></div></div><div id="refresh-status" class="refresh-status" role="status" aria-live="polite"></div></header>
+<header><div class="header-row"><div class="header-copy"><div class="title-row"><h1>申万分层主线与第一梯队看板</h1><div class="help-wrap"><button id="help-button" class="icon-button" type="button" aria-label="查看指标口径说明" aria-expanded="false" aria-controls="metric-help" title="指标口径说明">?</button>{指标说明}</div></div><p>行情日期 {market_date} · 生成时间 {generated} · 不评价当前位置和买卖时点</p></div><div class="header-actions"><div class="theme-switch" role="group" aria-label="界面主题"><button class="theme-option" type="button" data-theme-choice="light" aria-pressed="false" title="切换到明亮模式"><span class="theme-icon" aria-hidden="true">☀</span><span class="theme-label">明亮</span></button><button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="true" title="切换到深色模式"><span class="theme-icon" aria-hidden="true">☾</span><span class="theme-label">深色</span></button></div><button id="refresh-button" class="refresh-button" type="button" onclick="refreshMarket()" title="重新获取行情并生成看板"><span class="refresh-icon" aria-hidden="true">↻</span><span>更新行情</span></button><img id="refresh-loading" class="refresh-loading" src="加载中.gif" alt="加载中" hidden></div></div><div id="refresh-status" class="refresh-status" role="status" aria-live="polite"></div></header>
 <div class="summary"><div class="metric"><span class="metric-label">市场状态</span><b>{state}</b><small>{state_reason}</small></div></div>
 <nav class="dashboard-tabs" role="tablist" aria-label="看板内容">
   <button id="tab-industry" class="tab-button" type="button" role="tab" aria-selected="true" aria-controls="panel-industry" tabindex="0">行业</button>
@@ -1126,39 +1242,116 @@ function setupTabs() {{
   activateTab(tabs.find((tab) => tab.id === savedId) || tabs[0], false);
 }}
 
-async function refreshMarket() {{
+const cloudUpdateApi = 'https://a-share-dashboard-refresh.linfeisama.workers.dev';
+const cloudRunStorageKey = 'dashboard-refresh-run-id';
+const cloudPollInterval = 5000;
+let cloudPollPromise = null;
+
+function setRefreshLoading(isLoading) {{
   const button = document.getElementById('refresh-button');
+  const loading = document.getElementById('refresh-loading');
+  button.disabled = isLoading;
+  loading.hidden = !isLoading;
+}}
+
+function setRefreshStatus(message, state = '') {{
   const status = document.getElementById('refresh-status');
+  status.className = `refresh-status ${{state}}`.trim();
+  status.textContent = message;
+}}
+
+async function readJsonResponse(response) {{
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) throw new Error('更新服务返回了无法识别的内容');
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw new Error(result.message || '更新失败');
+  return result;
+}}
+
+function rememberCloudRun(runId) {{
+  try {{
+    if (runId) localStorage.setItem(cloudRunStorageKey, String(runId));
+    else localStorage.removeItem(cloudRunStorageKey);
+  }} catch (_error) {{}}
+}}
+
+function reloadLatestDashboard() {{
+  const url = new URL(window.location.href);
+  url.searchParams.set('updated', Date.now().toString());
+  window.location.replace(url.toString());
+}}
+
+async function pollCloudRefresh(runId) {{
+  if (cloudPollPromise) return cloudPollPromise;
+  cloudPollPromise = (async () => {{
+    setRefreshLoading(true);
+    rememberCloudRun(runId);
+    for (let attempt = 0; attempt < 180; attempt += 1) {{
+      const query = runId ? `?run_id=${{encodeURIComponent(runId)}}` : '';
+      const response = await fetch(`${{cloudUpdateApi}}/更新状态${{query}}`, {{ cache: 'no-store' }});
+      const result = await readJsonResponse(response);
+      const run = result.run;
+      if (!run) {{
+        setRefreshStatus('更新请求已提交，正在等待云端任务开始…');
+      }} else if (run.status === 'completed') {{
+        rememberCloudRun('');
+        if (run.conclusion === 'success') {{
+          setRefreshStatus('更新完成，正在载入最新看板…', 'success');
+          window.setTimeout(reloadLatestDashboard, 700);
+          return;
+        }}
+        throw new Error(`云端更新未完成（${{run.conclusion || '状态未知'}}）`);
+      }} else if (run.status === 'queued' || run.status === 'waiting' || run.status === 'pending') {{
+        runId = run.run_id || runId;
+        rememberCloudRun(runId);
+        setRefreshStatus('更新请求已提交，正在等待云端计算…');
+      }} else {{
+        runId = run.run_id || runId;
+        rememberCloudRun(runId);
+        setRefreshStatus('正在获取行情并重新计算，通常需要几分钟…');
+      }}
+      await new Promise((resolve) => window.setTimeout(resolve, cloudPollInterval));
+    }}
+    throw new Error('云端更新等待超时，请稍后再点一次更新行情');
+  }})().catch((error) => {{
+    rememberCloudRun('');
+    setRefreshStatus(error.message, 'error');
+    setRefreshLoading(false);
+  }}).finally(() => {{
+    cloudPollPromise = null;
+  }});
+  return cloudPollPromise;
+}}
+
+async function refreshMarket() {{
   if (window.location.protocol === 'file:') {{
-    status.className = 'refresh-status error';
-    status.textContent = '请先运行“启动看板网站.cmd”，再通过本地网站使用更新按钮。';
+    setRefreshStatus('请先运行“启动看板网站.cmd”，再通过本地网站使用更新按钮。', 'error');
     return;
   }}
   const isLocalService = ['127.0.0.1', 'localhost'].includes(window.location.hostname);
   if (!isLocalService) {{
-    status.className = 'refresh-status success';
-    status.textContent = '已打开 GitHub 手动更新入口；运行“更新A股主线在线看板”后，约几分钟再刷新本页。';
-    window.open('https://github.com/linfeisama/a-share-mainline-dashboard/actions/workflows/%E6%9B%B4%E6%96%B0%E5%9C%A8%E7%BA%BF%E7%9C%8B%E6%9D%BF.yml', '_blank', 'noopener');
+    setRefreshLoading(true);
+    setRefreshStatus('正在提交云端更新请求…');
+    try {{
+      const response = await fetch(`${{cloudUpdateApi}}/更新行情`, {{ method: 'POST', cache: 'no-store' }});
+      const result = await readJsonResponse(response);
+      await pollCloudRefresh(result.run && result.run.run_id);
+    }} catch (error) {{
+      setRefreshStatus(error.message, 'error');
+      setRefreshLoading(false);
+    }}
     return;
   }}
-  button.disabled = true;
-  button.classList.add('loading');
-  status.className = 'refresh-status';
-  status.textContent = '正在获取行情并重新计算，请稍候…';
+  setRefreshLoading(true);
+  setRefreshStatus('正在获取行情并重新计算，请稍候…');
   try {{
     const response = await fetch('/refresh', {{ method: 'POST', cache: 'no-store' }});
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) throw new Error('当前站点未连接手动更新服务');
-    const result = await response.json();
-    if (!response.ok || !result.ok) throw new Error(result.message || '更新失败');
-    status.className = 'refresh-status success';
-    status.textContent = '更新完成，正在载入最新看板…';
+    await readJsonResponse(response);
+    setRefreshStatus('更新完成，正在载入最新看板…', 'success');
     window.setTimeout(() => window.location.reload(), 400);
   }} catch (error) {{
-    status.className = 'refresh-status error';
-    status.textContent = `${{error.message}}。请确认“启动看板网站.cmd”正在运行。`;
-    button.disabled = false;
-    button.classList.remove('loading');
+    setRefreshStatus(`${{error.message}}。请确认“启动看板网站.cmd”正在运行。`, 'error');
+    setRefreshLoading(false);
   }}
 }}
 document.addEventListener('DOMContentLoaded', () => {{
@@ -1167,6 +1360,11 @@ document.addEventListener('DOMContentLoaded', () => {{
   setupThemeSwitch();
   setupHelpPopover();
   setupTabs();
+  if (!['127.0.0.1', 'localhost'].includes(window.location.hostname)) {{
+    let savedRunId = '';
+    try {{ savedRunId = localStorage.getItem(cloudRunStorageKey) || ''; }} catch (_error) {{}}
+    if (savedRunId) pollCloudRefresh(savedRunId);
+  }}
 }});
 </script>
 </body></html>"""
@@ -1213,6 +1411,8 @@ def main() -> None:
     print(f"  层级：一级 {len(first)}，二级 {len(second)}，三级 {len(third)}，叶子 {len(leaves)}")
 
     print(f"2/8 获取 {len(leaves)} 个叶子行业日线...")
+    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+        准备申万当日代理行情()
     histories = 并行获取叶子日线(leaves, benchmark.index.max())
     histories, data_sources = 补齐过期叶子日线(histories, benchmark.index.max())
 
@@ -1254,7 +1454,7 @@ def main() -> None:
     try:
         concept_confirm = 获取概念确认(benchmark, selected, leaf_members)
     except Exception as exc:
-        concept_fallback = 结果目录 / "概念独立确认.csv"
+        concept_fallback = 根目录 / "基础数据" / "概念独立确认回退.csv"
         if not concept_fallback.exists():
             raise
         print(f"概念更新失败，使用上次成功结果：{exc}")
@@ -1264,7 +1464,7 @@ def main() -> None:
     try:
         etfs = 旧工具.获取ETF替代工具(selected)
     except Exception as exc:
-        etf_fallback = 结果目录 / "ETF主线替代工具.csv"
+        etf_fallback = 根目录 / "基础数据" / "ETF主线替代工具回退.csv"
         if not etf_fallback.exists():
             raise
         print(f"ETF 更新失败，使用上次成功结果：{exc}")
