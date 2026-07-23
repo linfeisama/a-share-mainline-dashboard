@@ -1,5 +1,8 @@
 name: 更新A股主线在线看板
 
+env:
+  TZ: Asia/Shanghai
+
 on:
   workflow_dispatch:
   push:
